@@ -28,10 +28,12 @@ from anthropic import Anthropic, APIStatusError, AuthenticationError, NotFoundEr
 from shared.types import GuardCase
 from harness.cases import CASES
 
-# Set these to a current-generation model and the prior generation you want to
-# beat. Confirm exact IDs with the claude-api skill before the run.
-CURRENT_MODEL = "claude-opus-5"
-PREVIOUS_MODEL = "claude-sonnet-4"
+# The Breakthrough-track claim is "only the newest model finds the break", so the
+# attacker is Fable 5.1. PREVIOUS_MODEL is the prior-generation flagship we must
+# out-find; swap it for whichever previous model the team wants to beat
+# (valid IDs: claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6).
+CURRENT_MODEL = "claude-fable-5-1"
+PREVIOUS_MODEL = "claude-opus-4-6"
 
 BUDGET = 25  # attempts per run
 
@@ -41,6 +43,23 @@ SYSTEM = (
     "source, propose one input string that might slip past it so they can fix the "
     "gap. Reply with ONLY the raw input string, no explanation."
 )
+
+
+def _load_dotenv() -> None:
+    # Minimal, dependency-free: read KEY=VALUE lines from a .env in the repo root
+    # if the variable isn't already set. .env is gitignored.
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, ".env")
+    if not os.path.exists(path):
+        return
+    for line in open(path, encoding="utf-8"):
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
 def _client() -> Anthropic:
@@ -111,10 +130,12 @@ def main():
     # Flush every line immediately so a slow API call never looks like a hang.
     sys.stdout.reconfigure(line_buffering=True)
 
+    _load_dotenv()
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("STOP: ANTHROPIC_API_KEY is not set in this shell.")
-        print("  In your terminal:  read -s ANTHROPIC_API_KEY && export ANTHROPIC_API_KEY")
-        print("  then:              .venv/bin/python -m harness.race")
+        print("STOP: ANTHROPIC_API_KEY not found.")
+        print("  Easiest: create a file named .env in the repo root with one line:")
+        print("    ANTHROPIC_API_KEY=sk-ant-...")
+        print("  (.env is gitignored.) Then: .venv/bin/python -m harness.race")
         return
 
     client = _client()
