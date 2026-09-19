@@ -24,9 +24,10 @@ from typing import Optional, Protocol, Sequence, runtime_checkable
 
 from shared.types import Attempt, GuardCase
 
-# The "current model" for the Phase 0 bake-off. Override via AnthropicAttackModel(model=...)
-# to run the previous-model baseline (Gate 1).
-DEFAULT_MODEL = "claude-opus-5"
+# The "current model" for the Phase 0 bake-off is Fable 5.1 -- the newest model,
+# which is the whole Breakthrough-track claim. Override via
+# AnthropicAttackModel(model=...) to run the previous-model baseline (Gate 1).
+DEFAULT_MODEL = "claude-fable-5-1"
 
 
 @dataclass

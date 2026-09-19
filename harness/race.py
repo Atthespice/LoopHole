@@ -28,10 +28,12 @@ from anthropic import Anthropic, APIStatusError, AuthenticationError, NotFoundEr
 from shared.types import GuardCase
 from harness.cases import CASES
 
-# Set these to a current-generation model and the prior generation you want to
-# beat. Confirm exact IDs with the claude-api skill before the run.
-CURRENT_MODEL = "claude-opus-5"
-PREVIOUS_MODEL = "claude-sonnet-4"
+# The Breakthrough-track claim is "only the newest model finds the break", so the
+# attacker is Fable 5.1. PREVIOUS_MODEL is the prior-generation flagship we must
+# out-find; swap it for whichever previous model the team wants to beat
+# (valid IDs: claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6).
+CURRENT_MODEL = "claude-fable-5-1"
+PREVIOUS_MODEL = "claude-opus-4-6"
 
 BUDGET = 25  # attempts per run
 
