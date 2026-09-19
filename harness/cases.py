@@ -120,3 +120,47 @@ CASES: list[GuardCase] = [
         ],
     ),
 ]
+
+
+# ===========================================================================
+# TEMPLATE: how to test a piece of code from somewhere else.
+#
+# You do 3 things. Copy this block, fill in the 3 spots marked TODO, then
+# remove the leading "# " from every line and from the CASES.append line at
+# the very bottom. Run:  .venv/bin/python -m harness.race
+#
+# Each field in plain words:
+#   name         a short label, e.g. "login_check". Anything unique.
+#   description  one sentence: what is this check SUPPOSED to do?
+#   guard        THE CODE YOU ARE TESTING. A function: text in, True/False out.
+#                Rule: it must return True when the input is ALLOWED through.
+#   oracle       THE HONEST JUDGE you write. Same input in, True/False out.
+#                Rule: it must return True when the input is REALLY dangerous.
+#                (The guard can be fooled; the oracle tells the actual truth.
+#                 A "real bypass" = guard says allowed BUT oracle says dangerous.)
+#   safe_inputs  a few normal, harmless inputs. These must NEVER be flagged.
+#                They prove the tool doesn't cry wolf on ordinary traffic.
+# ===========================================================================
+#
+# def their_guard(user_input: str) -> bool:
+#     # TODO 1: paste the function you want to test here.
+#     # It must return True = allowed, False = blocked.
+#     # If their code is the opposite (True = blocked), wrap it:
+#     #     return not their_original_function(user_input)
+#     ...
+#
+#
+# def their_oracle(user_input: str) -> bool:
+#     # TODO 2: write the honest check. Return True if this input is TRULY bad.
+#     # Example idea for a path check: resolve the real path and return True
+#     # if it lands outside the folder that is supposed to be off-limits.
+#     ...
+#
+#
+# CASES.append(GuardCase(
+#     name="their_check",
+#     description="TODO 3: one sentence on what the check should do.",
+#     guard=their_guard,
+#     oracle=their_oracle,
+#     safe_inputs=["a normal input", "another normal input"],
+# ))
