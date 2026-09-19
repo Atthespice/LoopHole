@@ -9,14 +9,15 @@ and agree on the change as a group first, then everyone re-pulls it.
 Fill these in before forking into folders. Don't skip this — it's what keeps five
 people from building five different things.
 
-- **Name:** Loophole, or Mwanya (Swahili for "gap/opening" — may land better with
-  local judges)? → `___________`
-- **The three guard functions to attack:** (path traversal check, DB input cleaner,
-  and allowlist check are the suggested defaults — remember the hero-case rule in
-  Phase 0: no textbook cheat-sheet bugs)
-  1. `___________`
-  2. `___________`
-  3. `___________`
+- **Name:** Loophole. (Mwanya was the alternative; decided 2026-09-19.)
+- **The three guard functions to attack** — categories only. The concrete bug in
+  each is written by the harness owner and lives only in `harness/` (guard +
+  oracle + tests). It is deliberately *not* documented here, so the loop is never
+  handed the answer and the demo isn't "we found the bug we wrote down."
+  Hero-case rule still applies: no textbook cheat-sheet bugs.
+  1. `path_guard` — file/path access check (self-built sanitizer flaw)
+  2. `sql_cleaner` — database input cleaner (self-built tokenization flaw)
+  3. `allowlist` — redirect/upload target allowlist (self-built matching flaw)
 - **Who owns which folder** (default assignment below — swap freely, just say so
   before anyone starts):
   - Harness & go/no-go → Rich
@@ -106,11 +107,13 @@ contract, not a replacement for it. In practice:
   (right entry point, right event shapes, no reaching into another folder's
   code)? Does it honor the Phase 0 gates (real bake-off opponent, self-constructed
   hero case, no silent refusals swallowed as "no bypass found")?
-- `CODEOWNERS` requests their review automatically on every PR. Branch protection
-  on `main` requiring that review has to be turned on by hand in the repo's
-  GitHub settings (Settings → Branches → protect `main` → require review from
-  Code Owners) — `gh` can't reliably do this on a personal-account private repo,
-  so do it once after the repo exists.
+- `CODEOWNERS` requests their review automatically on every PR. GitHub will
+  *not* let us hard-enforce it: branch protection is unavailable on private repos
+  under a free personal account (confirmed 2026-09-19, HTTP 403 "Upgrade to
+  GitHub Pro or make this repository public"). So the rule is by agreement:
+  nobody merges their own PR to `main`; you wait for caleb-kylib's approval.
+  If we want real enforcement later, the options are making the repo public
+  (after the demo) or GitHub Pro on the owner account.
 - caleb-kylib is not blocked waiting for all four folders — review as PRs land,
   not in one batch at the end.
 
