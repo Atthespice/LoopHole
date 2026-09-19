@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LoopHole</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0d1117; color: #e6edf3;
+         font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header { padding: 16px 20px; border-bottom: 1px solid #30363d; }
+  h1 { margin: 0; font-size: 18px; letter-spacing: .5px; }
+  .counters { margin-top: 8px; color: #8b949e; font-size: 13px; }
+  .counters b { color: #e6edf3; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 20px; }
+  section { border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+  section h2 { margin: 0; padding: 10px 14px; font-size: 13px; font-weight: 600;
+               color: #8b949e; border-bottom: 1px solid #30363d; background: #161b22; }
+  #feed { max-height: 70vh; overflow-y: auto; }
+  .row { display: flex; justify-content: space-between; gap: 12px;
+         padding: 6px 14px; border-bottom: 1px solid #21262d; }
+  .row .inp { white-space: pre-wrap; word-break: break-all; }
+  .tag { flex: none; font-weight: 700; }
+  .blocked { color: #6e7681; }
+  .allowed { color: #f0883e; }
+  #result { padding: 18px; }
+  #result.hidden { display: none; }
+  .banner { font-weight: 800; color: #f85149; letter-spacing: 1px; margin-bottom: 12px; }
+  .kv { margin: 8px 0; }
+  .kv .k { color: #8b949e; }
+  .val { white-space: pre-wrap; word-break: break-all; }
+  .fix { color: #3fb950; }
+  .hold { margin-top: 14px; color: #8b949e; }
+  .waiting { padding: 18px; color: #8b949e; }
+</style>
+</head>
+<body>
+<header>
+  <h1>LoopHole</h1>
+  <div class="counters" id="counters">connecting…</div>
+</header>
+<main>
+  <section>
+    <h2>attacking the guard</h2>
+    <div id="feed"></div>
+  </section>
+  <section>
+    <h2>the hole, and the one line that closes it</h2>
+    <div id="waiting" class="waiting">Watching for a confirmed bypass…</div>
+    <div id="result" class="hidden"></div>
+  </section>
+</main>
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const log = params.get("log") || "demo/fixtures/path_traversal.jsonl";
+  const speed = params.get("speed") || "1";
+
+  const feed = document.getElementById("feed");
+  const counters = document.getElementById("counters");
+  const waiting = document.getElementById("waiting");
+  const result = document.getElementById("result");
+
+  const c = { attempts: 0, blocked: 0, allowed: 0, candidates: 0, ruledOut: 0 };
+
+  function renderCounters(done) {
+    counters.textContent =
+      `attempts ${c.attempts} · blocked ${c.blocked} · got through ${c.allowed} · ` +
+      `candidates ${c.candidates} · false alarms ruled out ${c.ruledOut}` +
+      (done ? " · completed" : "");
+  }
+
+  function addRow(text, allowed) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const inp = document.createElement("span");
+    inp.className = "inp";
+    inp.textContent = text;                 // textContent: adversarial input, no HTML
+    const tag = document.createElement("span");
+    tag.className = "tag " + (allowed ? "allowed" : "blocked");
+    tag.textContent = allowed ? "ALLOWED" : "blocked";
+    row.append(inp, tag);
+    feed.append(row);
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  function showResult(v) {
+    waiting.classList.add("hidden");
+    result.classList.remove("hidden");
+    result.textContent = "";
+    const banner = document.createElement("div");
+    banner.className = "banner";
+    banner.textContent = "██  REAL BYPASS CONFIRMED  ██";
+    result.append(banner);
+    for (const [k, val, cls] of [
+      ["input", v.input, "val"],
+      ["why", v.explanation, "val"],
+      ["fix", v.suggested_fix, "val fix"],
+    ]) {
+      const wrap = document.createElement("div");
+      wrap.className = "kv";
+      const key = document.createElement("span");
+      key.className = "k";
+      key.textContent = k + ": ";
+      const value = document.createElement("span");
+      value.className = cls;
+      value.textContent = val || "";
+      wrap.append(key, value);
+      result.append(wrap);
+    }
+  }
+
+  renderCounters(false);
+  const src = new EventSource(
+    "/events?log=" + encodeURIComponent(log) + "&speed=" + encodeURIComponent(speed)
+  );
+
+  src.onmessage = function (e) {
+    let ev;
+    try { ev = JSON.parse(e.data); } catch (_) { return; }
+    const p = ev.payload || {};
+    if (ev.kind === "attempt") {
+      c.attempts++;
+      if (p.guard_result) { c.allowed++; addRow(p.input, true); }
+      else { c.blocked++; addRow(p.input, false); }
+    } else if (ev.kind === "candidate") {
+      c.candidates++;
+    } else if (ev.kind === "verdict") {
+      if (p.is_real_bypass) showResult(p);
+      else c.ruledOut++;
+    } else if (ev.kind === "done") {
+      renderCounters(true);
+    }
+    renderCounters(false);
+  };
+
+  src.addEventListener("end", function () { renderCounters(true); src.close(); });
+  src.onerror = function () { src.close(); };
+})();
+</script>
+</body>
+</html>

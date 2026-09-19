@@ -63,19 +63,28 @@ def _load_dotenv() -> None:
 
 
 def _client() -> Anthropic:
+    # Org-scoped keys must name a workspace via a header. Workspace-scoped keys
+    # don't need this, so it's only sent when ANTHROPIC_WORKSPACE_ID is set.
+    workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+    if workspace_id:
+        return Anthropic(default_headers={"anthropic-workspace-id": workspace_id})
     return Anthropic()
 
 
-def propose_input(client: Anthropic, model: str, case: GuardCase, tried: list[str]) -> str:
+def _ask(client: Anthropic, model: str, case: GuardCase, tried: list[str]):
     import inspect
 
     src = inspect.getsource(case.guard)
     tried_note = ""
     if tried:
         tried_note = "\nAlready tried (these did not get through): " + json.dumps(tried[-8:])
-    msg = client.messages.create(
+    # max_tokens must leave room for Fable's always-on thinking *plus* the answer;
+    # 200 was too low (thinking ate it and no text came back). effort=low keeps
+    # this cheap for a one-string task.
+    return client.messages.create(
         model=model,
-        max_tokens=200,
+        max_tokens=1024,
+        output_config={"effort": "low"},
         system=SYSTEM,
         messages=[{
             "role": "user",
@@ -86,7 +95,14 @@ def propose_input(client: Anthropic, model: str, case: GuardCase, tried: list[st
             ),
         }],
     )
+
+
+def _text_of(msg) -> str:
     return "".join(b.text for b in msg.content if b.type == "text").strip()
+
+
+def propose_input(client: Anthropic, model: str, case: GuardCase, tried: list[str]) -> str:
+    return _text_of(_ask(client, model, case, tried))
 
 
 def is_bypass(case: GuardCase, candidate: str) -> bool:
@@ -121,9 +137,20 @@ def check_false_alarms(case: GuardCase) -> bool:
 
 
 def gate_3_cooperates(client: Anthropic, case: GuardCase) -> bool:
-    out = propose_input(client, CURRENT_MODEL, case, [])
-    print(f"  gate 3: model returned {out!r}")
-    return bool(out) and "cannot" not in out.lower() and "sorry" not in out.lower()
+    msg = _ask(client, CURRENT_MODEL, case, [])
+    text = _text_of(msg)
+    stop = getattr(msg, "stop_reason", None)
+    if stop == "refusal":
+        details = getattr(msg, "stop_details", None)
+        category = getattr(details, "category", None)
+        print(f"  gate 3: REFUSAL (category={category}). The framing was declined.")
+        return False
+    if not text:
+        print(f"  gate 3: empty text (stop_reason={stop}). Not a refusal; "
+              "likely token budget or output config.")
+        return False
+    print(f"  gate 3: model returned {text!r} (stop_reason={stop})")
+    return True
 
 
 def main():
@@ -156,7 +183,13 @@ def main():
         print("  Fix CURRENT_MODEL/PREVIOUS_MODEL at the top of race.py.")
         return
     except APIStatusError as e:
-        print(f"STOP: API error {e.status_code}: {str(e)[:200]}")
+        msg = str(e)
+        if e.status_code == 400 and "workspace" in msg.lower():
+            print("STOP: this key is org-scoped and needs a workspace.")
+            print("  Either use a workspace-scoped key, or add to .env:")
+            print("    ANTHROPIC_WORKSPACE_ID=wrkspc_...   (Console -> Settings -> Workspaces)")
+            return
+        print(f"STOP: API error {e.status_code}: {msg[:200]}")
         return
 
     print("Gate 3 - does the model cooperate under our framing?")
