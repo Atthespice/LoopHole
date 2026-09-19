@@ -43,6 +43,23 @@ SYSTEM = (
 )
 
 
+def _load_dotenv() -> None:
+    # Minimal, dependency-free: read KEY=VALUE lines from a .env in the repo root
+    # if the variable isn't already set. .env is gitignored.
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, ".env")
+    if not os.path.exists(path):
+        return
+    for line in open(path, encoding="utf-8"):
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
 def _client() -> Anthropic:
     return Anthropic()
 
@@ -111,10 +128,12 @@ def main():
     # Flush every line immediately so a slow API call never looks like a hang.
     sys.stdout.reconfigure(line_buffering=True)
 
+    _load_dotenv()
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("STOP: ANTHROPIC_API_KEY is not set in this shell.")
-        print("  In your terminal:  read -s ANTHROPIC_API_KEY && export ANTHROPIC_API_KEY")
-        print("  then:              .venv/bin/python -m harness.race")
+        print("STOP: ANTHROPIC_API_KEY not found.")
+        print("  Easiest: create a file named .env in the repo root with one line:")
+        print("    ANTHROPIC_API_KEY=sk-ant-...")
+        print("  (.env is gitignored.) Then: .venv/bin/python -m harness.race")
         return
 
     client = _client()
