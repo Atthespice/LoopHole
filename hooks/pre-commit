@@ -1,0 +1,19 @@
+#!/bin/sh
+# LoopHole pre-commit hook: fast, keyless checks before every commit.
+# Install once:  ln -sf ../../hooks/pre-commit .git/hooks/pre-commit
+#
+# Runs the offline tests and the bypass regression gate. Point the gate at your
+# own guards by editing the --cases argument below.
+
+set -e
+
+PY=".venv/bin/python"
+[ -x "$PY" ] || PY="python"
+
+echo "[pre-commit] tests…"
+"$PY" -m pytest -q
+
+echo "[pre-commit] bypass gate…"
+"$PY" -m harness.check --offline --cases examples.fixed_guards:CASES
+
+echo "[pre-commit] ok"

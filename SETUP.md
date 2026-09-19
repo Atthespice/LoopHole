@@ -80,3 +80,18 @@ input is *truly* dangerous), and a few `safe_inputs`.
 
 You get: the exact input that broke your check, proof it's real, and the
 one-line fix — in the browser and the terminal.
+
+## 6. Keep it fixed — CI & pre-commit gate
+
+A live model attack is for *finding* a bypass. To *keep* a guard fixed, lock the
+bypass in as a regression check that runs on every commit — keyless and
+deterministic. Same idea as turning a security bug into a test.
+
+- **Record a bypass you found:** `python -m harness.check --live --record <case>`
+  appends it to `harness/known_bypasses.json`.
+- **The gate:** `python -m harness.check --offline --cases your_module:CASES`
+  exits non-zero if any guard still lets a recorded bypass through.
+- **CI:** `.github/workflows/ci.yml` runs the tests and the gate on every push /
+  PR. Point `--cases` at your own guards to gate your repo.
+- **Pre-commit:** `ln -sf ../../hooks/pre-commit .git/hooks/pre-commit` runs the
+  tests and the gate before each commit.
