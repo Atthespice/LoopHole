@@ -63,6 +63,11 @@ def _load_dotenv() -> None:
 
 
 def _client() -> Anthropic:
+    # Org-scoped keys must name a workspace via a header. Workspace-scoped keys
+    # don't need this, so it's only sent when ANTHROPIC_WORKSPACE_ID is set.
+    workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+    if workspace_id:
+        return Anthropic(default_headers={"anthropic-workspace-id": workspace_id})
     return Anthropic()
 
 
@@ -156,7 +161,13 @@ def main():
         print("  Fix CURRENT_MODEL/PREVIOUS_MODEL at the top of race.py.")
         return
     except APIStatusError as e:
-        print(f"STOP: API error {e.status_code}: {str(e)[:200]}")
+        msg = str(e)
+        if e.status_code == 400 and "workspace" in msg.lower():
+            print("STOP: this key is org-scoped and needs a workspace.")
+            print("  Either use a workspace-scoped key, or add to .env:")
+            print("    ANTHROPIC_WORKSPACE_ID=wrkspc_...   (Console -> Settings -> Workspaces)")
+            return
+        print(f"STOP: API error {e.status_code}: {msg[:200]}")
         return
 
     print("Gate 3 - does the model cooperate under our framing?")
