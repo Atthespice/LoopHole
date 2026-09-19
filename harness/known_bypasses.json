@@ -1,0 +1,11 @@
+{
+  "allowlist": [
+    "https://evil-example.com/x"
+  ],
+  "path_guard": [
+    "../safe_secrets/data"
+  ],
+  "sql_cleaner": [
+    "1\tOR\t1=1"
+  ]
+}
