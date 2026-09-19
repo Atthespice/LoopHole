@@ -17,11 +17,13 @@ Run from the repo root so `shared` and `harness` import cleanly:
 """
 
 import json
+import os
 import random
 import string
+import sys
 import time
 
-from anthropic import Anthropic
+from anthropic import Anthropic, APIStatusError, AuthenticationError, NotFoundError
 
 from shared.types import GuardCase
 from harness.cases import CASES
@@ -106,9 +108,35 @@ def gate_3_cooperates(client: Anthropic, case: GuardCase) -> bool:
 
 
 def main():
+    # Flush every line immediately so a slow API call never looks like a hang.
+    sys.stdout.reconfigure(line_buffering=True)
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("STOP: ANTHROPIC_API_KEY is not set in this shell.")
+        print("  In your terminal:  read -s ANTHROPIC_API_KEY && export ANTHROPIC_API_KEY")
+        print("  then:              .venv/bin/python -m harness.race")
+        return
+
     client = _client()
     case = CASES[0]  # run the gates on one case first
     print(f"Racing on case: {case.name}\n")
+
+    # One cheap call up front to surface auth / model-id problems clearly.
+    try:
+        client.messages.create(
+            model=CURRENT_MODEL, max_tokens=8,
+            messages=[{"role": "user", "content": "ping"}],
+        )
+    except AuthenticationError:
+        print("STOP: the API key was rejected (401). Check the key you exported.")
+        return
+    except NotFoundError:
+        print(f"STOP: model id {CURRENT_MODEL!r} not found (404).")
+        print("  Fix CURRENT_MODEL/PREVIOUS_MODEL at the top of race.py.")
+        return
+    except APIStatusError as e:
+        print(f"STOP: API error {e.status_code}: {str(e)[:200]}")
+        return
 
     print("Gate 3 - does the model cooperate under our framing?")
     if not gate_3_cooperates(client, case):
