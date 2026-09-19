@@ -1,0 +1,4 @@
+anthropic
+hypothesis
+rich
+pytest
