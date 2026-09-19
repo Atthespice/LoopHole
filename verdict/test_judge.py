@@ -9,7 +9,7 @@ import unicodedata
 import pytest
 
 from shared.types import Candidate, GuardCase
-from verdict.judge import judge, suggest_fix, tail_and_judge
+from verdict.judge import judge, load_case, main, suggest_fix, tail_and_judge
 
 ROOT = "/srv/files"
 
@@ -30,19 +30,46 @@ def _oracle(p: str) -> bool:
     return not _resolve(p).startswith(ROOT + "/")
 
 
-@pytest.fixture
-def case() -> GuardCase:
-    return GuardCase(
+BYPASS = "．．/etc/passwd"
+
+# Module-level so load_case() can import it via "verdict.test_judge:FIXTURE_CASES".
+FIXTURE_CASES: list[GuardCase] = [
+    GuardCase(
         name="path_traversal",
         description="path traversal check under /srv/files",
         guard=_guard,
         oracle=_oracle,
         safe_inputs=["readme.txt", "docs/guide.md"],
     )
+]
+
+
+@pytest.fixture
+def case() -> GuardCase:
+    return FIXTURE_CASES[0]
 
 
 def cand(case, s, idx=0):
     return Candidate(case_name=case.name, input=s, attempt_index=idx)
+
+
+def ev(kind, **payload):
+    return {"kind": kind, "payload": payload} if payload else {"kind": kind}
+
+
+def candidate_ev(case, s, idx):
+    return ev("candidate", case_name=case.name, input=s, attempt_index=idx)
+
+
+def write_log(path, events):
+    path.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+
+
+def read_events(path):
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+# --- judge() ------------------------------------------------------------------
 
 
 def test_real_bypass_confirmed(case):
@@ -98,6 +125,9 @@ def test_oracle_crash_is_not_a_bypass():
     assert "Oracle crashed" in v.explanation
 
 
+# --- suggest_fix() --------------------------------------------------------------
+
+
 @pytest.mark.parametrize(
     "value, needle",
     [
@@ -120,47 +150,126 @@ def test_suggest_fix_falls_back_on_case_description():
     assert "parameterized" in suggest_fix(case, "plain")
 
 
-def test_tail_and_judge_appends_verdicts(case, tmp_path):
+# --- tail_and_judge(): wire format --------------------------------------------------
+
+
+def test_one_verdict_per_candidate_event_even_for_repeated_input(case, tmp_path):
     log = tmp_path / "path_traversal.jsonl"
-    events = [
-        {"kind": "attempt", "payload": {"case_name": case.name, "input": "x", "guard_result": True}},
-        {"kind": "candidate", "payload": {"case_name": case.name, "input": "．．/etc/passwd", "attempt_index": 3}},
-        {"kind": "candidate", "payload": {"case_name": case.name, "input": "readme.txt", "attempt_index": 4}},
-        {"kind": "candidate", "payload": {"case_name": case.name, "input": "readme.txt", "attempt_index": 5}},  # dup
-        {"kind": "done"},
-    ]
-    log.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+    write_log(log, [
+        ev("attempt", case_name=case.name, input="x", guard_result=True),
+        candidate_ev(case, BYPASS, 3),
+        candidate_ev(case, "readme.txt", 4),
+        candidate_ev(case, "readme.txt", 5),  # same input, different attempt
+        ev("done"),
+    ])
 
     out = io.StringIO()
-    verdicts = tail_and_judge(case, str(log), poll=0.01, out=out)
+    res = tail_and_judge(case, str(log), poll=0.01, out=out)
 
-    assert [v.is_real_bypass for v in verdicts] == [True, False]
+    assert res.errors == []
+    assert [v.is_real_bypass for v in res.verdicts] == [True, False, False]
     lines = [json.loads(line) for line in out.getvalue().splitlines()]
-    assert all(line["kind"] == "verdict" for line in lines)
+    assert [line["kind"] for line in lines] == ["verdict"] * 3
     assert lines[0]["payload"]["is_real_bypass"] is True
     assert lines[0]["payload"]["suggested_fix"]
     assert set(lines[0]["payload"]) == {"case_name", "input", "is_real_bypass", "explanation", "suggested_fix"}
 
 
-def test_tail_and_judge_default_sink_appends_to_log(case, tmp_path):
+def test_every_candidate_has_a_verdict_when_tailer_returns(case, tmp_path):
     log = tmp_path / "path_traversal.jsonl"
-    events = [
-        {"kind": "candidate", "payload": {"case_name": case.name, "input": "docs/other.md", "attempt_index": 0}},
-        {"kind": "done"},
-    ]
-    log.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+    write_log(log, [
+        candidate_ev(case, "docs/other.md", 0),
+        candidate_ev(case, BYPASS, 1),
+        ev("done"),
+    ])
     tail_and_judge(case, str(log), poll=0.01)
-    kinds = [json.loads(line)["kind"] for line in log.read_text(encoding="utf-8").splitlines()]
-    assert kinds == ["candidate", "done", "verdict"]
+    events = read_events(log)
+    kinds = [e["kind"] for e in events]
+    assert kinds == ["candidate", "candidate", "done", "verdict", "verdict"]
+    # completion protocol: #verdicts == #candidates once the judge is finished
+    assert kinds.count("verdict") == kinds.count("candidate")
 
 
-def test_tail_and_judge_skips_already_judged(case, tmp_path):
+def test_restart_skips_exactly_the_already_judged_events(case, tmp_path):
     log = tmp_path / "path_traversal.jsonl"
-    events = [
-        {"kind": "candidate", "payload": {"case_name": case.name, "input": "readme.txt", "attempt_index": 0}},
-        {"kind": "verdict", "payload": {"case_name": case.name, "input": "readme.txt", "is_real_bypass": False,
-                                        "explanation": "already", "suggested_fix": "n/a"}},
-        {"kind": "done"},
-    ]
-    log.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
-    assert tail_and_judge(case, str(log), poll=0.01, out=io.StringIO()) == []
+    write_log(log, [
+        candidate_ev(case, "readme.txt", 0),
+        candidate_ev(case, "readme.txt", 1),
+        ev("verdict", case_name=case.name, input="readme.txt", is_real_bypass=False,
+           explanation="already", suggested_fix="n/a"),
+        candidate_ev(case, "readme.txt", 2),
+        ev("done"),
+    ])
+    # one prior verdict for "readme.txt" -> skip one candidate event, rule on the other two
+    res = tail_and_judge(case, str(log), poll=0.01, out=io.StringIO())
+    assert len(res.verdicts) == 2
+    assert all(v.input == "readme.txt" for v in res.verdicts)
+
+
+def test_corrupt_json_is_reported_not_dropped(case, tmp_path):
+    log = tmp_path / "path_traversal.jsonl"
+    good = json.dumps(candidate_ev(case, BYPASS, 0))
+    log.write_text(
+        "{not json\n" + good + "\n" + "[1, 2]\n" + json.dumps(ev("done")) + "\n",
+        encoding="utf-8",
+    )
+    seen = []
+    res = tail_and_judge(case, str(log), poll=0.01, out=io.StringIO(), on_error=seen.append)
+
+    assert len(res.verdicts) == 1 and res.verdicts[0].is_real_bypass
+    assert [e.line_no for e in res.errors] == [1, 3]
+    assert "corrupt JSON" in res.errors[0].reason
+    assert "not an object" in res.errors[1].reason
+    assert seen == res.errors  # on_error was called for each
+
+
+def test_malformed_candidate_payload_gets_a_verdict_and_an_error(case, tmp_path):
+    log = tmp_path / "path_traversal.jsonl"
+    write_log(log, [
+        {"kind": "candidate", "payload": {"case_name": case.name, "input": BYPASS}},   # no attempt_index
+        {"kind": "candidate", "payload": {"case_name": case.name, "input": 42, "attempt_index": 1}},
+        {"kind": "candidate", "payload": "nope"},
+        {"kind": "candidate"},
+        ev("done"),
+    ])
+    out = io.StringIO()
+    res = tail_and_judge(case, str(log), poll=0.01, out=out, on_error=lambda e: None)
+
+    assert len(res.errors) == 4
+    assert all("malformed candidate" in e.reason for e in res.errors)
+    assert "attempt_index" in res.errors[0].reason
+    # the one with a usable input still gets a (not-a-bypass) verdict on the wire
+    assert len(res.verdicts) == 1
+    assert res.verdicts[0].input == BYPASS
+    assert res.verdicts[0].is_real_bypass is False
+    assert "Malformed candidate" in res.verdicts[0].explanation
+    assert json.loads(out.getvalue())["kind"] == "verdict"
+
+
+def test_default_on_error_writes_to_stderr(case, tmp_path, capsys):
+    log = tmp_path / "path_traversal.jsonl"
+    log.write_text("garbage\n" + json.dumps(ev("done")) + "\n", encoding="utf-8")
+    tail_and_judge(case, str(log), poll=0.01, out=io.StringIO())
+    assert "line 1" in capsys.readouterr().err
+
+
+# --- CLI: case is injected, not imported ------------------------------------------
+
+
+def test_load_case_from_module_spec():
+    c = load_case("verdict.test_judge:FIXTURE_CASES", "path_traversal")
+    assert c is FIXTURE_CASES[0]
+
+
+def test_load_case_unknown_name_exits():
+    with pytest.raises(SystemExit):
+        load_case("verdict.test_judge:FIXTURE_CASES", "nope")
+
+
+def test_cli_end_to_end(case, tmp_path, capsys):
+    log = tmp_path / "path_traversal.jsonl"
+    write_log(log, [candidate_ev(case, BYPASS, 0), ev("done")])
+    rc = main(["path_traversal", "--cases", "verdict.test_judge:FIXTURE_CASES", "--log", str(log)])
+    assert rc == 0
+    assert "REAL BYPASS" in capsys.readouterr().out
+    assert [e["kind"] for e in read_events(log)] == ["candidate", "done", "verdict"]

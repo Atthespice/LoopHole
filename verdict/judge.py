@@ -15,25 +15,35 @@ plain-English explanation (shown live by demo/) and a one-line suggested fix
 derived from the shape of the input that got through.
 
 Wire format: `tail_and_judge()` follows runs/<case_name>.jsonl, judges every
-`candidate` event, and appends a `verdict` event for each. Stops on `done`.
+`candidate` event (one verdict per event), appends a `verdict` event for each,
+and returns after `done` once every earlier candidate has a verdict. Corrupt
+lines and malformed payloads are reported, never silently dropped.
 
-Only imports from shared/. Never imports loop/ or demo/.
+Only imports from shared/. Never imports loop/, demo/, or harness/; the CLI
+has the GuardCase injected via --cases MODULE:ATTR.
 """
 
 from __future__ import annotations
 
+import argparse
+import importlib
 import json
 import os
 import re
+import sys
 import time
 import unicodedata
-from dataclasses import asdict
+from collections import Counter
+from dataclasses import asdict, dataclass, field
 from typing import Callable, Iterable, Optional, TextIO
 from urllib.parse import unquote
 
 from shared.types import Candidate, GuardCase, Verdict
 
-__all__ = ["judge", "suggest_fix", "tail_and_judge", "verdict_event"]
+__all__ = [
+    "judge", "suggest_fix", "tail_and_judge", "verdict_event",
+    "TailResult", "TailError", "load_case", "main",
+]
 
 
 # --------------------------------------------------------------------------- #
@@ -211,24 +221,73 @@ def suggest_fix(case: GuardCase, value: str) -> str:
 # --------------------------------------------------------------------------- #
 # Wire format: tail runs/<case_name>.jsonl, append verdict events
 # --------------------------------------------------------------------------- #
+#
+# Completion protocol (verdict/'s reading of CONTRACT.md; see README):
+#   * loop/ writes `done` when it has finished *generating*. Verdicts for the
+#     last candidates land after it.
+#   * The tailer stops only after it has seen `done` AND ruled on every
+#     candidate that came before it, so when it returns, every candidate
+#     event in the file has a matching verdict event.
+#   * A consumer (demo/) must therefore not treat `done` as "nothing more will
+#     be written"; it should keep tailing until #verdicts == #candidates.
+#
+# Error handling: nothing is silently dropped. A line that is not valid JSON,
+# or a candidate whose payload is malformed, is reported through `on_error`
+# (stderr by default) and collected in TailResult.errors. A malformed
+# candidate that still carries a usable `input` gets a not-a-bypass verdict so
+# the wire never shows a candidate with no ruling.
+
+
+@dataclass
+class TailError:
+    """One problem seen while tailing. `line_no` is 1-based in the log file."""
+    line_no: int
+    reason: str
+    raw: str
+
+
+@dataclass
+class TailResult:
+    verdicts: list[Verdict] = field(default_factory=list)
+    errors: list[TailError] = field(default_factory=list)
 
 
 def verdict_event(v: Verdict) -> dict:
     return {"kind": "verdict", "payload": asdict(v)}
 
 
-def _candidate_from_payload(p: dict) -> Candidate:
-    return Candidate(
-        case_name=p["case_name"],
-        input=p["input"],
-        attempt_index=int(p.get("attempt_index", -1)),
-    )
+class MalformedCandidate(ValueError):
+    pass
 
 
-def _follow(path: str, poll: float, stop_on_done: bool) -> Iterable[dict]:
-    """Yield parsed events from a JSONL file as they are appended."""
+def _candidate_from_payload(p: object) -> Candidate:
+    """Strict: raises MalformedCandidate naming exactly what is wrong."""
+    if not isinstance(p, dict):
+        raise MalformedCandidate(f"payload is {type(p).__name__}, expected object")
+    problems = []
+    case_name = p.get("case_name")
+    if not isinstance(case_name, str):
+        problems.append("case_name missing or not a string")
+    value = p.get("input")
+    if not isinstance(value, str):
+        problems.append("input missing or not a string")
+    idx = p.get("attempt_index")
+    if not isinstance(idx, int) or isinstance(idx, bool):
+        problems.append("attempt_index missing or not an integer")
+    if problems:
+        raise MalformedCandidate("; ".join(problems))
+    return Candidate(case_name=case_name, input=value, attempt_index=idx)
+
+
+def _default_on_error(err: TailError) -> None:
+    print(f"[verdict] line {err.line_no}: {err.reason}: {err.raw[:200]!r}", file=sys.stderr)
+
+
+def _follow(path: str, poll: float) -> Iterable[tuple[int, str]]:
+    """Yield (line_no, raw_line) for each complete line appended to the file."""
     while not os.path.exists(path):
         time.sleep(poll)
+    line_no = 0
     with open(path, "r", encoding="utf-8") as fh:
         buf = ""
         while True:
@@ -239,16 +298,28 @@ def _follow(path: str, poll: float, stop_on_done: bool) -> Iterable[dict]:
             buf += chunk
             if not buf.endswith("\n"):
                 continue  # partial line; wait for the writer to finish it
-            line, buf = buf.strip(), ""
-            if not line:
-                continue
+            line_no += 1
+            line, buf = buf.rstrip("\r\n"), ""
+            if line.strip():
+                yield line_no, line
+
+
+def _existing_verdict_counts(log_path: str) -> Counter:
+    """How many verdicts already exist per input (for restart idempotency)."""
+    counts: Counter = Counter()
+    if not os.path.exists(log_path):
+        return counts
+    with open(log_path, "r", encoding="utf-8") as fh:
+        for line in fh:
             try:
                 ev = json.loads(line)
             except json.JSONDecodeError:
-                continue
-            yield ev
-            if stop_on_done and ev.get("kind") == "done":
-                return
+                continue  # reported by the main pass
+            if isinstance(ev, dict) and ev.get("kind") == "verdict":
+                p = ev.get("payload")
+                if isinstance(p, dict) and isinstance(p.get("input"), str):
+                    counts[p["input"]] += 1
+    return counts
 
 
 def tail_and_judge(
@@ -256,65 +327,128 @@ def tail_and_judge(
     log_path: str,
     *,
     poll: float = 0.2,
-    stop_on_done: bool = True,
     out: Optional[TextIO] = None,
-) -> list[Verdict]:
-    """Follow `log_path`, judge each `candidate` event, append a `verdict`
-    event for it. Returns all verdicts issued. Candidates already judged (by
-    input) are skipped so a restart doesn't double-rule.
+    on_error: Callable[[TailError], None] = _default_on_error,
+) -> TailResult:
+    """Follow `log_path`, judge every `candidate` event, append a `verdict`
+    event for each one. Returns after `done` once every candidate before it
+    has a verdict.
+
+    One verdict per candidate *event*: the same input from two different
+    attempts gets two verdicts. Restart idempotency: on start, existing
+    verdicts are counted per input, and that many candidate events for that
+    input are skipped, so re-running the judge never double-rules and never
+    collapses separate attempts.
 
     `out` lets tests pass a file handle; by default appends to `log_path`."""
-    seen: set[str] = set()
-    verdicts: list[Verdict] = []
+    already = _existing_verdict_counts(log_path)
+    result = TailResult()
 
-    # Pre-scan so a restarted judge doesn't re-rule existing verdicts.
-    if os.path.exists(log_path):
-        with open(log_path, "r", encoding="utf-8") as fh:
-            for line in fh:
-                try:
-                    ev = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if ev.get("kind") == "verdict":
-                    seen.add(ev["payload"]["input"])
+    def report(line_no: int, reason: str, raw: str) -> None:
+        err = TailError(line_no=line_no, reason=reason, raw=raw)
+        result.errors.append(err)
+        on_error(err)
+
+    def emit(v: Verdict) -> None:
+        result.verdicts.append(v)
+        sink.write(json.dumps(verdict_event(v), ensure_ascii=False) + "\n")
+        sink.flush()
 
     sink = out if out is not None else open(log_path, "a", encoding="utf-8")
     try:
-        for ev in _follow(log_path, poll, stop_on_done):
-            if ev.get("kind") != "candidate":
+        for line_no, raw in _follow(log_path, poll):
+            try:
+                ev = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                report(line_no, f"corrupt JSON ({exc.msg})", raw)
                 continue
-            cand = _candidate_from_payload(ev["payload"])
-            if cand.input in seen:
+            if not isinstance(ev, dict) or not isinstance(ev.get("kind"), str):
+                report(line_no, "event is not an object with a string 'kind'", raw)
                 continue
-            seen.add(cand.input)
-            v = judge(case, cand)
-            verdicts.append(v)
-            sink.write(json.dumps(verdict_event(v), ensure_ascii=False) + "\n")
-            sink.flush()
+
+            kind = ev["kind"]
+            if kind == "done":
+                return result
+            if kind != "candidate":
+                continue
+
+            payload = ev.get("payload")
+            try:
+                cand = _candidate_from_payload(payload)
+            except MalformedCandidate as exc:
+                report(line_no, f"malformed candidate payload: {exc}", raw)
+                # Still rule on it if there is a usable input, so no candidate
+                # is left without a verdict on the wire.
+                value = payload.get("input") if isinstance(payload, dict) else None
+                if isinstance(value, str):
+                    emit(Verdict(
+                        case_name=case.name, input=value, is_real_bypass=False,
+                        explanation=f"Malformed candidate event (line {line_no}: {exc}); "
+                                    f"not judged as a bypass.",
+                        suggested_fix="n/a",
+                    ))
+                continue
+
+            if already[cand.input] > 0:
+                already[cand.input] -= 1  # ruled on in a previous run
+                continue
+
+            emit(judge(case, cand))
     finally:
         if out is None:
             sink.close()
-    return verdicts
+    return result
 
 
-if __name__ == "__main__":
-    # CLI for a live run:  python -m verdict.judge <case_name> [runs/<case_name>.jsonl]
-    # A GuardCase holds callables, so it can't arrive over JSONL -- it has to
-    # come from harness/, the folder that owns the cases. This is the *only*
-    # place verdict/ touches another folder, and only at the CLI edge.
-    import sys
+# --------------------------------------------------------------------------- #
+# CLI -- the GuardCase is injected, never imported from another folder
+# --------------------------------------------------------------------------- #
 
-    from harness.cases import CASES  # noqa: E402
 
-    if len(sys.argv) < 2:
-        sys.exit("usage: python -m verdict.judge <case_name> [log_path]")
-    name = sys.argv[1]
-    path = sys.argv[2] if len(sys.argv) > 2 else os.path.join("runs", f"{name}.jsonl")
-    matches = [c for c in CASES if c.name == name]
-    if not matches:
-        sys.exit(f"no GuardCase named {name!r} in harness.cases.CASES")
-    for v in tail_and_judge(matches[0], path):
+def load_case(spec: str, case_name: str) -> GuardCase:
+    """Resolve `module.path:ATTR` to a GuardCase. ATTR may be a GuardCase, or
+    a list/dict of them, in which case `case_name` selects one. verdict/ has
+    no knowledge of which module that is; the caller supplies it."""
+    if ":" not in spec:
+        raise SystemExit(f"--cases must look like module.path:ATTR, got {spec!r}")
+    mod_name, attr = spec.rsplit(":", 1)
+    obj = getattr(importlib.import_module(mod_name), attr)
+    if isinstance(obj, GuardCase):
+        found = [obj] if obj.name == case_name else []
+    elif isinstance(obj, dict):
+        found = [obj[case_name]] if case_name in obj else []
+    else:
+        found = [c for c in obj if isinstance(c, GuardCase) and c.name == case_name]
+    if not found:
+        raise SystemExit(f"no GuardCase named {case_name!r} in {spec}")
+    return found[0]
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m verdict.judge",
+        description="Tail a run log, append a verdict event for every candidate.",
+    )
+    parser.add_argument("case_name", help="GuardCase.name to judge against")
+    parser.add_argument(
+        "--cases", required=True, metavar="MODULE:ATTR",
+        help="where to load the GuardCase from, e.g. harness.cases:CASES",
+    )
+    parser.add_argument("--log", help="defaults to runs/<case_name>.jsonl")
+    args = parser.parse_args(argv)
+
+    case = load_case(args.cases, args.case_name)
+    log = args.log or os.path.join("runs", f"{args.case_name}.jsonl")
+    res = tail_and_judge(case, log)
+    for v in res.verdicts:
         flag = "REAL BYPASS" if v.is_real_bypass else "false alarm"
         print(f"[{flag}] {v.input!r}: {v.explanation}")
         if v.is_real_bypass:
             print(f"    fix: {v.suggested_fix}")
+    if res.errors:
+        print(f"[verdict] {len(res.errors)} malformed line(s) reported above", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
