@@ -17,11 +17,12 @@ people from building five different things.
   1. `___________`
   2. `___________`
   3. `___________`
-- **Who owns which folder** (Rich, Mastean12, Thiararapeter, knelso — one each):
-  - Harness & go/no-go → `___________`
-  - Attack loop → `___________`
-  - Verdict (real-break judge) → `___________`
-  - Demo → `___________`
+- **Who owns which folder** (default assignment below — swap freely, just say so
+  before anyone starts):
+  - Harness & go/no-go → Rich
+  - Attack loop → Mastean12
+  - Verdict (real-break judge) → Thiararapeter
+  - Demo → knelso
 - **5th machine — review:** caleb-kylib, running Codex, doesn't own a folder.
   Reviews every PR before it merges to `main` — see "Review" below.
 - **Stop rule:** if the go/no-go race (Phase 0 below) doesn't clearly pass all
