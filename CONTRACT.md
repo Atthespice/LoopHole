@@ -6,24 +6,27 @@ and agree on the change as a group first, then everyone re-pulls it.
 
 ## 0. Decide together, right now
 
-Fill these in before forking into folders. Don't skip this — it's what keeps four
-people from building four different things.
+Fill these in before forking into folders. Don't skip this — it's what keeps five
+people from building five different things.
 
 - **Name:** Loophole, or Mwanya (Swahili for "gap/opening" — may land better with
   local judges)? → `___________`
 - **The three guard functions to attack:** (path traversal check, DB input cleaner,
-  and allowlist check are the suggested defaults)
+  and allowlist check are the suggested defaults — remember the hero-case rule in
+  Phase 0: no textbook cheat-sheet bugs)
   1. `___________`
   2. `___________`
   3. `___________`
-- **Who owns which folder:**
+- **Who owns which folder** (Rich, Mastean12, Thiararapeter, knelso — one each):
   - Harness & go/no-go → `___________`
   - Attack loop → `___________`
   - Verdict (real-break judge) → `___________`
   - Demo → `___________`
-- **Stop rule:** if the go/no-go race (Phase 0 below) doesn't clearly beat a plain
-  fuzzer on speed and false-positive rate, we stop and pick a different idea — no
-  arguments later. Agreed? → `yes / no`
+- **5th machine — review:** caleb-kylib, running Codex, doesn't own a folder.
+  Reviews every PR before it merges to `main` — see "Review" below.
+- **Stop rule:** if the go/no-go race (Phase 0 below) doesn't clearly pass all
+  three gates, we stop and pick a different idea — no arguments later.
+  Agreed? → `yes / no`
 
 ## Tech stack
 
@@ -77,6 +80,7 @@ Only move to Phase 1 once all three gates pass on a self-constructed case.
 ```
 LoopHole/
   CONTRACT.md      <- this file, the one everyone agreed on
+  CODEOWNERS       <- caleb-kylib on every path, required review before merge
   shared/
     types.py        <- copy the code block below verbatim, do not edit alone
   harness/          <- Person A
@@ -88,6 +92,26 @@ LoopHole/
 Each person works only inside their own folder plus `shared/types.py` (read-only
 once copied). Nobody needs to read anyone else's code to build their piece — that's
 what the shapes below are for.
+
+## Review — the 5th machine
+
+caleb-kylib doesn't own a folder. Their job is reviewing everyone else's PRs
+before they merge to `main` — a second, senior-engineer pass on top of the
+contract, not a replacement for it. In practice:
+
+- Every folder owner works on a branch (`harness/`, `loop/`, `verdict/`, `demo/`
+  branch names are fine) and opens a PR into `main` instead of pushing directly.
+- caleb-kylib reviews for: does this actually match the folder's contract above
+  (right entry point, right event shapes, no reaching into another folder's
+  code)? Does it honor the Phase 0 gates (real bake-off opponent, self-constructed
+  hero case, no silent refusals swallowed as "no bypass found")?
+- `CODEOWNERS` requests their review automatically on every PR. Branch protection
+  on `main` requiring that review has to be turned on by hand in the repo's
+  GitHub settings (Settings → Branches → protect `main` → require review from
+  Code Owners) — `gh` can't reliably do this on a personal-account private repo,
+  so do it once after the repo exists.
+- caleb-kylib is not blocked waiting for all four folders — review as PRs land,
+  not in one batch at the end.
 
 ## The shared contract
 
@@ -198,9 +222,12 @@ and `loop/`/`verdict/` can be built and tested with fixture `GuardCase`s before
 
 1. Fill in section 0 together, as a team, before anyone opens a laptop separately.
 2. Everyone copies the `shared/types.py` code block verbatim into their own clone.
-3. Each person opens Claude Code **inside their own folder** (`cd harness/`,
-   `cd loop/`, etc.) and pastes only their folder's contract section above, plus
-   this file for reference. That's the entire brief needed to build in isolation.
-4. If a shape in `shared/types.py` turns out to be wrong mid-build, stop, raise it
+3. Each of the four folder owners opens Claude Code **inside their own folder**
+   (`cd harness/`, `cd loop/`, etc.) and pastes only their folder's contract
+   section above, plus this file for reference. That's the entire brief needed
+   to build in isolation.
+4. caleb-kylib works from `main`/PRs across all four folders using Codex — no
+   folder of their own, see "Review" above.
+5. If a shape in `shared/types.py` turns out to be wrong mid-build, stop, raise it
    with the group, agree on the fix, and have everyone re-copy it — don't patch it
    solo, that's what causes the collisions this file exists to prevent.

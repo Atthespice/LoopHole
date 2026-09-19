@@ -1,0 +1,5 @@
+# See CONTRACT.md "Review" section.
+# caleb-kylib reviews every PR before it merges to main (5th machine, no folder
+# of their own). Branch protection requiring this review is a manual step in
+# repo settings — this file alone doesn't enforce it.
+* @caleb-kylib
