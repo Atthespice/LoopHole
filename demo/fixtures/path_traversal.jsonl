@@ -1,0 +1,16 @@
+{"kind": "attempt", "payload": {"case_name": "path_traversal", "input": "index.html", "guard_result": true, "reasoning": "baseline: confirm a normal request is allowed"}}
+{"kind": "attempt", "payload": {"case_name": "path_traversal", "input": "docs/readme.txt", "guard_result": true, "reasoning": "baseline: a nested normal request"}}
+{"kind": "attempt", "payload": {"case_name": "path_traversal", "input": "../../../etc/passwd", "guard_result": false, "reasoning": "the obvious climb-out, to see what gets rejected"}}
+{"kind": "attempt", "payload": {"case_name": "path_traversal", "input": "....//....//etc/passwd", "guard_result": true, "reasoning": "doubled dots, in case '..' is stripped once"}}
+{"kind": "candidate", "payload": {"case_name": "path_traversal", "input": "....//....//etc/passwd", "attempt_index": 4}}
+{"kind": "verdict", "payload": {"case_name": "path_traversal", "input": "....//....//etc/passwd", "is_real_bypass": false, "explanation": "Got past the guard, but it never left the safe root \u2014 it resolves to '/srv/app/public/..../..../etc/passwd', which is inside. Not a bypass.", "suggested_fix": ""}}
+{"kind": "attempt", "payload": {"case_name": "path_traversal", "input": "/etc/passwd", "guard_result": false, "reasoning": "absolute path, in case the join is naive"}}
+{"kind": "attempt", "payload": {"case_name": "path_traversal", "input": "..%2f..%2fetc%2fpasswd", "guard_result": true, "reasoning": "percent-encoded separators, in case decoding happens later"}}
+{"kind": "candidate", "payload": {"case_name": "path_traversal", "input": "..%2f..%2fetc%2fpasswd", "attempt_index": 6}}
+{"kind": "verdict", "payload": {"case_name": "path_traversal", "input": "..%2f..%2fetc%2fpasswd", "is_real_bypass": false, "explanation": "Got past the guard, but it never left the safe root \u2014 it resolves to '/srv/app/public/..%2f..%2fetc%2fpasswd', which is inside. Not a bypass.", "suggested_fix": ""}}
+{"kind": "attempt", "payload": {"case_name": "path_traversal", "input": "../", "guard_result": false, "reasoning": "bare parent, to find where the boundary is drawn"}}
+{"kind": "attempt", "payload": {"case_name": "path_traversal", "input": "./../../srv/app/public/../secrets.env", "guard_result": false, "reasoning": "climb out through a long detour"}}
+{"kind": "attempt", "payload": {"case_name": "path_traversal", "input": "../public_backup/id_rsa", "guard_result": true, "reasoning": "the prefix test has no trailing separator \u2014 a sibling directory whose name merely starts with the safe root should satisfy it while living outside"}}
+{"kind": "candidate", "payload": {"case_name": "path_traversal", "input": "../public_backup/id_rsa", "attempt_index": 9}}
+{"kind": "verdict", "payload": {"case_name": "path_traversal", "input": "../public_backup/id_rsa", "is_real_bypass": true, "explanation": "The guard resolves the path correctly, then asks whether the result startswith('/srv/app/public') \u2014 with no trailing separator. '/srv/app/public_backup/id_rsa' is not inside the safe root, but it does start with that string, so the check passes and the read escapes.", "suggested_fix": "Compare against SAFE_ROOT + os.sep (or use os.path.commonpath), not a bare prefix."}}
+{"kind": "done"}
