@@ -24,10 +24,11 @@ from typing import Optional, Protocol, Sequence, runtime_checkable
 
 from shared.types import Attempt, GuardCase
 
-# The "current model" for the Phase 0 bake-off is Fable 5.1 -- the newest model,
-# which is the whole Breakthrough-track claim. Override via
-# AnthropicAttackModel(model=...) to run the previous-model baseline (Gate 1).
-DEFAULT_MODEL = "claude-fable-5-1"
+# The attacking model. Sonnet 5 is used because the most capable models
+# (Fable 5.1, Opus 5) refuse this task under their cyber-safety classifier, even
+# for authorized first-party testing; Sonnet 5 performs the bounded task and
+# finds real bypasses. Override via AnthropicAttackModel(model=...).
+DEFAULT_MODEL = "claude-sonnet-5"
 
 
 @dataclass
@@ -134,7 +135,7 @@ class AnthropicAttackModel:
         self,
         client: object = None,
         model: str = DEFAULT_MODEL,
-        max_tokens: int = 1024,
+        max_tokens: int = 2048,
     ) -> None:
         self._client = client
         self._model = model
@@ -152,6 +153,10 @@ class AnthropicAttackModel:
         response = client.messages.create(
             model=self._model,
             max_tokens=self._max_tokens,
+            # Current models think before answering; low effort keeps this cheap
+            # and, crucially, leaves room under max_tokens for the actual answer
+            # (without it, thinking can consume the whole budget and return no text).
+            output_config={"effort": "low"},
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": build_prompt(case, history)}],
         )

@@ -32,7 +32,7 @@ from harness.cases import CASES
 # attacker is Fable 5.1. PREVIOUS_MODEL is the prior-generation flagship we must
 # out-find; swap it for whichever previous model the team wants to beat
 # (valid IDs: claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-4-6).
-CURRENT_MODEL = "claude-fable-5-1"
+CURRENT_MODEL = "claude-sonnet-5"
 PREVIOUS_MODEL = "claude-opus-4-6"
 
 BUDGET = 25  # attempts per run
