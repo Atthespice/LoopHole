@@ -108,10 +108,10 @@ See "Demo script" section below for the exact beats and what to say.
 We first tried to use **Fable 5.1**, Anthropic's most capable model, as the
 attacker.
 
-**It refuses.** Every time, on every framing — even when we explain this is our
-own code, in a sandbox, for defensive testing. Its safety training treats
-"find a way past this check" as too close to real hacking to help with,
-regardless of intent.
+**It refuses.** Every time, on every framing — even fully abstract ones with no
+code and no payload, just "in general, how do blocklist validators fail?" Its
+safety training treats the entire topic of "how might this check be bypassed"
+as too close to real hacking to help with, regardless of intent.
 
 So we route the bounded, verified task to **Sonnet 5**, which completes it
 responsibly — the input never leaves a sandboxed, oracle-checked pipeline.
@@ -119,6 +119,34 @@ responsibly — the input never leaves a sandboxed, oracle-checked pipeline.
 > Speaker note: this shows the judges you actually evaluated the frontier
 > model and made a real engineering call, instead of just picking a model
 > name for the pitch.
+
+---
+
+## Slide 8b — Fable 5.1 built part of this system
+
+Refusing to attack isn't the same as being less capable — it's a different
+question entirely. And we don't have to guess where Fable stands on
+capability: **it's in our own commit history.**
+
+Fable 5.1 wrote our **verdict engine** — the code that decides whether a
+bypass is real — including the subtlest part of the whole pipeline:
+
+- **Restart-safe, in order, exactly once.** If the judge restarts mid-run, it
+  must not re-judge an input twice or skip one — it counts existing verdicts
+  per input and picks up exactly where it left off.
+- **A completion protocol most people get wrong on the first try.** The
+  attacker can finish generating *before* the judge finishes ruling — so
+  "done" doesn't mean "no more writes." The judge guarantees every candidate
+  gets a verdict even after the attacker has already stopped.
+- **Nothing is ever silently dropped** — malformed data gets reported, never
+  swallowed.
+
+That's exactly the kind of long-horizon, correctness-under-edge-cases
+reasoning Fable is built for. **It drew a hard line at playing attacker, and
+did its best work on the part of the system that keeps the tool honest.**
+
+> Speaker note: this is the strongest Fable slide — it's not "we asked and it
+> said no," it's "here's real code it wrote, and it's the hardest part."
 
 ---
 
@@ -175,9 +203,18 @@ not a scramble if you need it.
   opinion and stops. We *run* the code, hundreds of times if needed, and
   *prove* the bug reaches a real resource — that's the "verify" step, not the
   "attack" step. Point at slide 6.
-- **"Why doesn't Fable power the attack?"** → It refuses on safety grounds; we
-  tested this directly (slide 8) and route to a model that will do the
-  bounded task inside a verified sandbox.
+- **"Why doesn't Fable power the attack?"** → It refuses on safety grounds,
+  even for fully abstract questions with no code and no payload — we tested
+  that directly (slide 8). That's a policy line, not a capability gap: Fable
+  wrote our verdict engine, the hardest-to-get-right part of the pipeline
+  (slide 8b) — check the git history, `Co-Authored-By: Claude Fable 5.1` is
+  right there on those commits.
+- **"Isn't 'the newer model is worse at your task' bad for you?"** → It's
+  worse at *this one adversarial framing* by design, not in general — same
+  model, same session, wrote the more architecturally demanding code
+  elsewhere in the repo. Capability and safety judgment are different axes;
+  we'd rather show you a model with both than one that attacks anything asked
+  of it.
 - **"Does this scale to a whole codebase?"** → Not automatically — each guard
   needs a human to define what "actually dangerous" means for that specific
   check (the oracle). It's built for testing the checks that matter most, not
