@@ -90,6 +90,8 @@ def main() -> None:
     parser.add_argument("--budget", type=int, default=15, help="max attempts (default 15)")
     parser.add_argument("--port", type=int, default=8000, help="web port (default 8000)")
     parser.add_argument("--no-web", action="store_true", help="terminal only")
+    parser.add_argument("--show-refusal", action="store_true",
+                        help="before attacking, show Fable 5.1 refuse the same task live")
     args = parser.parse_args()
 
     if args.fixture:
@@ -109,6 +111,13 @@ def main() -> None:
     log_abs = os.path.join(REPO, log_rel)
     os.makedirs(os.path.dirname(log_abs), exist_ok=True)
     open(log_abs, "w").close()  # fresh run
+
+    if args.show_refusal:
+        from harness.fable_check import print_report
+
+        print("[0/3] checking the newest model first…")
+        print_report(case)
+        print()
 
     from loop.run_loop import run_loop
     from verdict.judge import tail_and_judge
