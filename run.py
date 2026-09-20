@@ -49,7 +49,27 @@ def _find_case(name: str):
     sys.exit(f"No case named {name!r}. Available: {names}")
 
 
+def _free_port(preferred: int) -> int:
+    """Use `preferred` if it's open, otherwise pick any free port. Avoids the
+    'browser opens someone else's server on 8000' trap on a busy machine."""
+    import socket
+
+    for candidate in (preferred, 0):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(("127.0.0.1", candidate))
+            chosen = s.getsockname()[1]
+            s.close()
+            if candidate != preferred:
+                print(f"(port {preferred} was busy — using {chosen} instead)")
+            return chosen
+        except OSError:
+            s.close()
+    return preferred
+
+
 def _serve(log_rel: str, port: int) -> None:
+    port = _free_port(port)
     url = f"http://127.0.0.1:{port}/?log={log_rel}"
     print(f"\nOpening {url}\n(Ctrl-C to stop the server.)")
     proc = subprocess.Popen([sys.executable, os.path.join(REPO, "web", "server.py"), str(port)])
