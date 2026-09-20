@@ -75,6 +75,20 @@ def _path_guard_fixed(path: str) -> bool:
     return resolved == SAFE_ROOT or resolved.startswith(SAFE_ROOT + "/")
 
 
+def _sql_cleaner_broken(value: str) -> bool:
+    low = value.lower()
+    if "'" in value or ";" in value:
+        return False
+    if " or " in low:  # only catches a single ASCII space on each side
+        return False
+    return True
+
+
+def _sql_cleaner_fixed(value: str) -> bool:
+    # Value goes into a numeric WHERE clause, so only allow integers.
+    return value.strip().isdigit()
+
+
 FIXED_GUARDS: dict[str, FixedGuard] = {
     "path_traversal": FixedGuard(
         case_name="path_traversal",
@@ -88,6 +102,13 @@ FIXED_GUARDS: dict[str, FixedGuard] = {
             "deeply/nested/but/fine.css",
         ],
         fix_summary="Compare against SAFE_ROOT + os.sep, not the bare prefix.",
+    ),
+    "sql_cleaner": FixedGuard(
+        case_name="sql_cleaner",
+        broken=_sql_cleaner_broken,
+        fixed=_sql_cleaner_fixed,
+        safe_inputs=["1", "42", "0"],
+        fix_summary="Reject non-numeric input; only allow integers for a numeric WHERE clause.",
     ),
 }
 
